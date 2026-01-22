@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         全能流媒体 ID & 链接提取工具 (Ultimate v3.6)
+// @name         全能流媒体 ID & 链接提取工具 (Ultimate v3.7)
 // @namespace    http://tampermonkey.net/
-// @version      3.6
-// @description  支持全平台 ID 提取，修复芒果TV粘滞。通过 Metadata 检查更新。
+// @version      3.7
+// @description  支持全平台 ID 提取，识别成功后自动显示悬浮窗，支持位置记忆。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @match        https://www.disneyplus.com/*
@@ -34,11 +34,10 @@
     let lastUrl = location.href;
     let currentContent = '';
 
-    // 1. 创建悬浮窗并加载保存的位置
+    // 1. 创建悬浮窗（默认不显示）
     const btn = document.createElement('div');
     btn.id = 'media-id-fetcher';
-    btn.innerHTML = '正在扫描...';
-
+    
     const savedTop = GM_getValue('btn_top', '150px');
     const savedLeft = GM_getValue('btn_left', null);
 
@@ -61,11 +60,12 @@
         textAlign: 'center',
         minWidth: '145px',
         backdropFilter: 'blur(8px)',
-        touchAction: 'none'
+        touchAction: 'none',
+        display: 'none' // 默认隐藏
     });
     document.body.appendChild(btn);
 
-    // 2. 增强型拖拽逻辑 (使用捕获阶段 + Pointer Events 解决芒果TV粘滞问题)
+    // 2. 增强型拖拽逻辑
     let isDragging = false;
     let startX, startY, initialX, initialY;
 
@@ -73,30 +73,24 @@
         isDragging = true;
         btn.style.cursor = 'grabbing';
         btn.style.transition = 'none';
-        
         startX = e.clientX;
         startY = e.clientY;
         const rect = btn.getBoundingClientRect();
         initialX = rect.left;
         initialY = rect.top;
-
         window.addEventListener('pointermove', doDrag, true);
         window.addEventListener('pointerup', stopDrag, true);
     };
 
     const doDrag = (e) => {
         if (!isDragging) return;
-        e.stopImmediatePropagation(); // 拦截事件，防止被芒果TV等页面的原生脚本干扰
-        
+        e.stopImmediatePropagation();
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
-        
         let newX = initialX + dx;
         let newY = initialY + dy;
-
         newX = Math.max(0, Math.min(window.innerWidth - btn.offsetWidth, newX));
         newY = Math.max(0, Math.min(window.innerHeight - btn.offsetHeight, newY));
-
         btn.style.left = newX + 'px';
         btn.style.top = newY + 'px';
         btn.style.right = 'auto';
@@ -104,45 +98,32 @@
 
     const stopDrag = (e) => {
         if (!isDragging) return;
-        
         const moveDist = Math.sqrt(Math.pow(e.clientX - startX, 2) + Math.pow(e.clientY - startY, 2));
-        
         isDragging = false;
         btn.style.cursor = 'grab';
-        
         GM_setValue('btn_top', btn.style.top);
         GM_setValue('btn_left', btn.style.left);
-
         window.removeEventListener('pointermove', doDrag, true);
         window.removeEventListener('pointerup', stopDrag, true);
-
-        // 位移小于 6 像素则视为点击复制
-        if (moveDist < 6) {
-            handleCopy();
-        }
+        if (moveDist < 6) handleCopy();
     };
 
     btn.addEventListener('pointerdown', startDrag);
 
-    // 3. 核心提取逻辑
+    // 3. 提取逻辑
     function getIdentifier() {
         const url = new URL(window.location.href);
         const path = url.pathname, search = url.searchParams;
 
-        // Bilibili
         if (url.hostname.includes('bilibili.tv')) return path.match(/\/play\/\d+\/(\d+)/) ? 'ep' + path.match(/\/play\/\d+\/(\d+)/)[1] : null;
         if (url.hostname.includes('bilibili.com')) return path.match(/\/(ep\d+)/)?.[1] ? path.match(/\/(ep\d+)/)[1] + '_tv' : null;
-        // 芒果 TV
         if (url.hostname.includes('mgtv.com')) return path.match(/\/b\/(\d+)/)?.[1];
-        // 爱奇艺
         if (url.hostname.includes('iqiyi.com')) return path.match(/\/(v_[^\.]+)\.html/)?.[1];
         if (url.hostname.includes('iq.com')) return path.match(/-([a-z0-9]+)$/i)?.[1];
-        // 腾讯/优酷/Netflix/Disney
         if (url.hostname.includes('v.qq.com')) return path.match(/\/cover\/([^\/]+)/)?.[1];
         if (url.hostname.includes('v.youku.com')) return path.match(/\/id_([^\.]+)\.html/)?.[1];
         if (url.hostname.includes('netflix.com')) return search.get('jbv');
         if (url.hostname.includes('disneyplus.com')) return path.match(/entity-[a-f0-9-]+/)?.[0];
-        // 其他
         if (url.hostname.includes('linetv.tw')) return path.match(/\/drama\/(\d+)/)?.[1];
         if (url.hostname.includes('mytvsuper.com')) return path.match(/_(\d+)\//)?.[1];
         if (url.hostname.includes('now.com')) {
@@ -151,7 +132,6 @@
         }
         if (url.hostname.includes('mewatch.sg')) return path.match(/-(\d+)$/)?.[1];
 
-        // 完整链接模式
         const fullLinkSites = ['viu.com', 'myvideo.net.tw', 'hamivideo.hinet.net', 'video.friday.tw'];
         const fullLinkPaths = ['/vod/', 'details', 'product', 'detail'];
         if (fullLinkSites.some(s => url.hostname.includes(s)) && fullLinkPaths.some(p => path.includes(p))) return window.location.href;
@@ -159,7 +139,7 @@
         return null;
     }
 
-    // 4. UI 刷新
+    // 4. UI 刷新（控制显示与隐藏）
     function refreshUI() {
         const content = getIdentifier();
         if (content) {
@@ -170,10 +150,10 @@
 
             btn.innerHTML = `<div style="margin-bottom:4px; font-size:11px; color:#aaa;">${isUrl ? '复制链接' : '复制 ID'}</div><code style="color:#ffd700; background:#000; padding:2px 4px; border-radius:4px; font-size:10px; display:block;">${displayCode || 'LINK'}</code>`;
             btn.style.borderLeft = '4px solid #E50914';
+            btn.style.display = 'block'; // 识别成功，显示
         } else {
             currentContent = '';
-            btn.innerHTML = '<span style="color:#666;">未检测到目标</span>';
-            btn.style.borderLeft = '4px solid #444';
+            btn.style.display = 'none'; // 识别失败，隐藏
         }
     }
 
@@ -187,12 +167,14 @@
         }
     }
 
+    // 监听 URL 变化
     setInterval(() => {
         if (lastUrl !== location.href) {
             lastUrl = location.href;
             refreshUI();
         }
-    }, 500);
+    }, 800);
 
+    // 初始执行
     refreshUI();
 })();
