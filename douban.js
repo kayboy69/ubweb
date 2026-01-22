@@ -12,6 +12,8 @@
 // @connect      movie.douban.com
 // @connect      douban.com
 // @connect      sec.douban.com
+// @updateURL    https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/douban.js
+// @downloadURL  https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/douban.js
 // ==/UserScript==
 
 (function() {
