@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         全能流媒体 ID & 链接提取工具 (Ultimate v3.4 Pro Fix)
+// @name         全能流媒体 ID & 链接提取工具 (Ultimate v3.6)
 // @namespace    http://tampermonkey.net/
-// @version      3.4
-// @description  深度修复芒果TV等站点的拖拽粘滞问题。支持 B站, Netflix, Disney+, 腾讯, 优酷, 爱奇艺, 芒果, LINE TV 等。
+// @version      3.6
+// @description  支持全平台 ID 提取，修复芒果TV粘滞。通过 Metadata 检查更新。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @match        https://www.disneyplus.com/*
@@ -21,6 +21,8 @@
 // @match        https://www.mytvsuper.com/*
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.tv/*
+// @updateURL    https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
+// @downloadURL  https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
 // @grant        GM_setClipboard
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -32,12 +34,11 @@
     let lastUrl = location.href;
     let currentContent = '';
 
-    // 1. 创建悬浮窗
+    // 1. 创建悬浮窗并加载保存的位置
     const btn = document.createElement('div');
     btn.id = 'media-id-fetcher';
     btn.innerHTML = '正在扫描...';
 
-    // 读取位置：如果没存过，默认 150, 20
     const savedTop = GM_getValue('btn_top', '150px');
     const savedLeft = GM_getValue('btn_left', null);
 
@@ -46,7 +47,7 @@
         top: savedTop,
         left: savedLeft,
         right: savedLeft ? 'auto' : '20px',
-        zIndex: '2147483647', // 使用 32 位整数最大值，确保在芒果TV最顶层
+        zIndex: '2147483647',
         padding: '12px',
         backgroundColor: 'rgba(34, 34, 34, 0.95)',
         color: '#fff',
@@ -60,11 +61,11 @@
         textAlign: 'center',
         minWidth: '145px',
         backdropFilter: 'blur(8px)',
-        touchAction: 'none' // 禁止移动端默认滚动，优化拖拽
+        touchAction: 'none'
     });
     document.body.appendChild(btn);
 
-    // 2. 增强型拖拽逻辑 (防止粘滞)
+    // 2. 增强型拖拽逻辑 (使用捕获阶段 + Pointer Events 解决芒果TV粘滞问题)
     let isDragging = false;
     let startX, startY, initialX, initialY;
 
@@ -72,29 +73,27 @@
         isDragging = true;
         btn.style.cursor = 'grabbing';
         btn.style.transition = 'none';
-
+        
         startX = e.clientX;
         startY = e.clientY;
         const rect = btn.getBoundingClientRect();
         initialX = rect.left;
         initialY = rect.top;
 
-        // 使用捕获阶段 (true)，抢在网页原生脚本前拦截事件
         window.addEventListener('pointermove', doDrag, true);
         window.addEventListener('pointerup', stopDrag, true);
     };
 
     const doDrag = (e) => {
         if (!isDragging) return;
-        e.stopImmediatePropagation(); // 阻止芒果TV脚本捕获此移动
-
+        e.stopImmediatePropagation(); // 拦截事件，防止被芒果TV等页面的原生脚本干扰
+        
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
-
+        
         let newX = initialX + dx;
         let newY = initialY + dy;
 
-        // 边界检查
         newX = Math.max(0, Math.min(window.innerWidth - btn.offsetWidth, newX));
         newY = Math.max(0, Math.min(window.innerHeight - btn.offsetHeight, newY));
 
@@ -105,20 +104,19 @@
 
     const stopDrag = (e) => {
         if (!isDragging) return;
-
+        
         const moveDist = Math.sqrt(Math.pow(e.clientX - startX, 2) + Math.pow(e.clientY - startY, 2));
-
+        
         isDragging = false;
         btn.style.cursor = 'grab';
-
-        // 保存位置
+        
         GM_setValue('btn_top', btn.style.top);
         GM_setValue('btn_left', btn.style.left);
 
         window.removeEventListener('pointermove', doDrag, true);
         window.removeEventListener('pointerup', stopDrag, true);
 
-        // 如果移动距离极小，判定为点击
+        // 位移小于 6 像素则视为点击复制
         if (moveDist < 6) {
             handleCopy();
         }
@@ -126,35 +124,19 @@
 
     btn.addEventListener('pointerdown', startDrag);
 
-    // 3. 提取逻辑 (包含各平台适配)
+    // 3. 核心提取逻辑
     function getIdentifier() {
         const url = new URL(window.location.href);
-        const path = url.pathname;
-        const search = url.searchParams;
+        const path = url.pathname, search = url.searchParams;
 
         // Bilibili
-        if (url.hostname.includes('bilibili.tv')) {
-            const m = path.match(/\/play\/\d+\/(\d+)/);
-            return m ? 'ep' + m[1] : null;
-        }
-        if (url.hostname.includes('bilibili.com')) {
-            const m = path.match(/\/(ep\d+)/);
-            return m ? m[1] + '_tv' : null;
-        }
+        if (url.hostname.includes('bilibili.tv')) return path.match(/\/play\/\d+\/(\d+)/) ? 'ep' + path.match(/\/play\/\d+\/(\d+)/)[1] : null;
+        if (url.hostname.includes('bilibili.com')) return path.match(/\/(ep\d+)/)?.[1] ? path.match(/\/(ep\d+)/)[1] + '_tv' : null;
         // 芒果 TV
-        if (url.hostname.includes('mgtv.com')) {
-            const m = path.match(/\/b\/(\d+)/);
-            return m ? m[1] : null;
-        }
+        if (url.hostname.includes('mgtv.com')) return path.match(/\/b\/(\d+)/)?.[1];
         // 爱奇艺
-        if (url.hostname.includes('iqiyi.com')) {
-            const m = path.match(/\/(v_[^\.]+)\.html/);
-            return m ? m[1] : null;
-        }
-        if (url.hostname.includes('iq.com')) {
-            const m = path.match(/-([a-z0-9]+)$/i);
-            return m ? m[1] : null;
-        }
+        if (url.hostname.includes('iqiyi.com')) return path.match(/\/(v_[^\.]+)\.html/)?.[1];
+        if (url.hostname.includes('iq.com')) return path.match(/-([a-z0-9]+)$/i)?.[1];
         // 腾讯/优酷/Netflix/Disney
         if (url.hostname.includes('v.qq.com')) return path.match(/\/cover\/([^\/]+)/)?.[1];
         if (url.hostname.includes('v.youku.com')) return path.match(/\/id_([^\.]+)\.html/)?.[1];
@@ -167,11 +149,12 @@
             const id = search.get('id'), t = search.get('type');
             return (id && t) ? `${url.origin}${url.pathname}?id=${id}&type=${t}` : null;
         }
-        // 完整链接平台
-        if ((url.hostname.includes('viu.com') && path.includes('/vod/')) ||
-            (url.hostname.includes('myvideo.net.tw') && path.includes('details')) ||
-            (url.hostname.includes('hamivideo.hinet.net') && path.includes('product')) ||
-            (url.hostname.includes('friday.tw') && path.includes('detail'))) return window.location.href;
+        if (url.hostname.includes('mewatch.sg')) return path.match(/-(\d+)$/)?.[1];
+
+        // 完整链接模式
+        const fullLinkSites = ['viu.com', 'myvideo.net.tw', 'hamivideo.hinet.net', 'video.friday.tw'];
+        const fullLinkPaths = ['/vod/', 'details', 'product', 'detail'];
+        if (fullLinkSites.some(s => url.hostname.includes(s)) && fullLinkPaths.some(p => path.includes(p))) return window.location.href;
 
         return null;
     }
