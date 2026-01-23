@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         全能流媒体 ID & 链接提取工具 (Ultimate v3.7)
+// @name         全能流媒体 ID & 链接提取工具 (Ultimate v3.8)
 // @namespace    http://tampermonkey.net/
-// @version      3.7
-// @description  支持全平台 ID 提取，识别成功后自动显示悬浮窗，支持位置记忆。
+// @version      3.8
+// @description  支持全平台 ID 提取，识别成功后自动显示悬浮窗，支持位置记忆。新增 WeTV 与 咪咕视频支持。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @match        https://www.disneyplus.com/*
@@ -21,6 +21,8 @@
 // @match        https://www.mytvsuper.com/*
 // @match        https://www.bilibili.com/*
 // @match        https://www.bilibili.tv/*
+// @match        https://wetv.vip/*
+// @match        https://www.miguvideo.com/*
 // @updateURL    https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
 // @downloadURL  https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
 // @grant        GM_setClipboard
@@ -34,10 +36,11 @@
     let lastUrl = location.href;
     let currentContent = '';
 
-    // 1. 创建悬浮窗（默认不显示）
+    // 1. 创建悬浮窗
     const btn = document.createElement('div');
     btn.id = 'media-id-fetcher';
     
+    // 记忆位置功能
     const savedTop = GM_getValue('btn_top', '150px');
     const savedLeft = GM_getValue('btn_left', null);
 
@@ -61,11 +64,11 @@
         minWidth: '145px',
         backdropFilter: 'blur(8px)',
         touchAction: 'none',
-        display: 'none' // 默认隐藏
+        display: 'none'
     });
     document.body.appendChild(btn);
 
-    // 2. 增强型拖拽逻辑
+    // 2. 拖拽逻辑 (带位置保存)
     let isDragging = false;
     let startX, startY, initialX, initialY;
 
@@ -101,6 +104,7 @@
         const moveDist = Math.sqrt(Math.pow(e.clientX - startX, 2) + Math.pow(e.clientY - startY, 2));
         isDragging = false;
         btn.style.cursor = 'grab';
+        // 保存位置到存储中
         GM_setValue('btn_top', btn.style.top);
         GM_setValue('btn_left', btn.style.left);
         window.removeEventListener('pointermove', doDrag, true);
@@ -114,6 +118,11 @@
     function getIdentifier() {
         const url = new URL(window.location.href);
         const path = url.pathname, search = url.searchParams;
+
+        // --- 新增支持 ---
+        if (url.hostname.includes('wetv.vip')) return path.match(/\/play\/([a-z0-9]+)/i)?.[1];
+        if (url.hostname.includes('miguvideo.com')) return path.match(/\/detail\/(\d+)/)?.[1];
+        // ----------------
 
         if (url.hostname.includes('bilibili.tv')) return path.match(/\/play\/\d+\/(\d+)/) ? 'ep' + path.match(/\/play\/\d+\/(\d+)/)[1] : null;
         if (url.hostname.includes('bilibili.com')) return path.match(/\/(ep\d+)/)?.[1] ? path.match(/\/(ep\d+)/)[1] + '_tv' : null;
@@ -139,7 +148,7 @@
         return null;
     }
 
-    // 4. UI 刷新（控制显示与隐藏）
+    // 4. UI 刷新
     function refreshUI() {
         const content = getIdentifier();
         if (content) {
@@ -150,10 +159,10 @@
 
             btn.innerHTML = `<div style="margin-bottom:4px; font-size:11px; color:#aaa;">${isUrl ? '复制链接' : '复制 ID'}</div><code style="color:#ffd700; background:#000; padding:2px 4px; border-radius:4px; font-size:10px; display:block;">${displayCode || 'LINK'}</code>`;
             btn.style.borderLeft = '4px solid #E50914';
-            btn.style.display = 'block'; // 识别成功，显示
+            btn.style.display = 'block';
         } else {
             currentContent = '';
-            btn.style.display = 'none'; // 识别失败，隐藏
+            btn.style.display = 'none';
         }
     }
 
@@ -167,7 +176,6 @@
         }
     }
 
-    // 监听 URL 变化
     setInterval(() => {
         if (lastUrl !== location.href) {
             lastUrl = location.href;
@@ -175,6 +183,5 @@
         }
     }, 800);
 
-    // 初始执行
     refreshUI();
 })();
