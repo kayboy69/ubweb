@@ -24,6 +24,8 @@
 // @match        https://wetv.vip/*
 // @match        https://www.miguvideo.com/*
 // @match        https://www.catchplay.com/*
+// @updateURL    https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
+// @downloadURL  https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
 // @grant        GM_setClipboard
 // @grant        GM_setValue
 // @grant        GM_getValue
