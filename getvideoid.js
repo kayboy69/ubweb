@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         全能流媒体 ID & 链接提取工具 (Ultimate v4.9)
+// @name         全能流媒体 ID & 链接提取工具 (Ultimate v5.0)
 // @namespace    http://tampermonkey.net/
-// @version      4.9
-// @description  大幅增强站点识别率，支持主流中外流媒体平台，优化 Catchplay 映射逻辑。
+// @version      5.0
+// @description  大幅增强站点识别率，支持主流中外流媒体平台，新增TVB Anywhere识别。
 // @author       Gemini
 // @match        *://*.netflix.com/*
 // @match        *://*.disneyplus.com/*
