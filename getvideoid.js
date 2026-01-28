@@ -24,6 +24,7 @@
 // @match        *://*.wetv.vip/*
 // @match        *://*.miguvideo.com/*
 // @match        *://*.catchplay.com/*
+// @match        *://*.tvbanywhere.com/*
 // @updateURL    https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
 // @downloadURL  https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
 // @grant        GM_setClipboard
