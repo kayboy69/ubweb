@@ -89,6 +89,7 @@
         // --- 港台/东南亚站 ---
         if (host.includes('linetv.tw')) return p.match(/\/drama\/(\d+)/)?.[1];
         if (host.includes('mytvsuper.com')) return p.match(/_(\d+)\//)?.[1] || sp.get('programme_id');
+        if (host.includes('tvbanywhere.com')) return p.match(/\/programme\/[^/]+_(\d+)\//)?.[1];
         if (host.includes('mewatch.sg')) return p.match(/-(\d+)$/)?.[1];
         if (host.includes('now.com')) return sp.get('id') ? `${url.origin}${p}?id=${sp.get('id')}&type=${sp.get('type')}` : null;
         
