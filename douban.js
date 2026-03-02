@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         豆瓣信息自动填充 - 综合增强版
 // @namespace    http://tampermonkey.net/
-// @version      4.7
-// @description  修复非中英文标题填入中文名的错误
+// @version      5.0
+// @description  优化性能、复用代码、增强健壮性与异常处理
 // @author       Combined & Gemini
 // @match        *://ubweb.*/*
 // @match        *://*.ubweb.*/*
@@ -19,64 +19,234 @@
 (function() {
     'use strict';
 
-    // --- 定时器：持续检测元素是否存在 ---
-    const timer = setInterval(() => {
-        // 模块 1：豆瓣链接输入框旁的“自动填写”
-        const doubanInput1 = getInputByLabel('豆瓣链接');
-        if (doubanInput1 && !document.getElementById('fetch-douban-btn')) {
-            initButton1(doubanInput1);
-        }
-
-        // 模块 2：指定占位符输入框旁的“脚本解析”
-        const urlInput2 = document.querySelector('input[placeholder="请输入豆瓣链接"]');
-        if (urlInput2 && !document.getElementById('my-custom-parse-btn')) {
-            createBtn2(urlInput2);
-        }
-    }, 1000);
-
-    function getInputByLabel(labelText) {
-        const labels = Array.from(document.querySelectorAll('.el-form-item__label'));
-        const targetLabel = labels.find(el => el.textContent.trim().includes(labelText));
-        return targetLabel ? targetLabel.closest('.el-form-item').querySelector('input, textarea') : null;
-    }
-
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    function chineseToNum(char) {
-        const map = {'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10};
-        return map[char] || char;
+    // --- 1. 性能优化：使用 MutationObserver 替代 setInterval ---
+    let debounceTimer = null;
+    const observer = new MutationObserver(() => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(injectButtons, 500); // 防抖，避免频繁执行
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // --- 2. 按钮注入逻辑 ---
+    function injectButtons() {
+        // 模块 1：根据 Label "豆瓣链接" 注入
+        const labels = Array.from(document.querySelectorAll('.el-form-item__label'));
+        labels.forEach(label => {
+            if (label.textContent.trim().includes('豆瓣链接')) {
+                const container = label.closest('.el-form-item');
+                if (!container) return;
+                const input = container.querySelector('input, textarea');
+                const btnContainer = container.querySelector('.el-form-item__content > div');
+
+                // 使用 class 判断是否已注入，避免 ID 冲突
+                if (input && btnContainer && !btnContainer.querySelector('.fetch-douban-btn-1')) {
+                    initButton1(input, btnContainer);
+                }
+            }
+        });
+
+        // 模块 2：根据 Placeholder 注入
+        const urlInputs2 = document.querySelectorAll('input[placeholder="请输入豆瓣链接"]');
+        urlInputs2.forEach(inputEl => {
+            const container = inputEl.closest('.el-form-item__content')?.children[0];
+            if (container && !container.querySelector('.fetch-douban-btn-2')) {
+                createBtn2(inputEl, container);
+            }
+        });
     }
 
-    // --- 核心逻辑：解析中文名、英文名及季份 ---
+    // --- 3. 核心抓取与解析逻辑 (统一抽象) ---
+    function fetchDoubanInfo(url) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: url,
+                headers: { "User-Agent": navigator.userAgent, "Referer": "https://movie.douban.com/" },
+                onload: function(response) {
+                    if (response.status !== 200) {
+                        return reject(`请求失败，状态码: ${response.status}`);
+                    }
+
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(response.responseText, "text/html");
+                    const htmlStr = response.responseText;
+                    const infoText = doc.querySelector('#info')?.innerText || "";
+
+                    // 提取基础信息
+                    const fullTitle = doc.querySelector('h1 span[property="v:itemreviewed"]')?.innerText.trim() || "";
+                    const year = doc.querySelector('h1 .year')?.innerText.replace(/\(|\)/g, '') || "";
+
+                    // 解析名字和季份
+                    let { chineseName, englishName, seasonTag } = parseTitleAndSeason(fullTitle);
+
+                    // 如果提取出的英文名不是有效的英文（比如全是汉字/日文/韩文），则置空
+                    if (englishName && (!/[a-zA-Z]/.test(englishName) || /[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/.test(englishName))) {
+                        englishName = "";
+                    }
+
+                    if (!englishName) {
+                        englishName = findEnglishFromAKA(infoText);
+                    }
+
+                    // 其他信息
+                    const otherNames = findOtherNamesFromAKA(infoText);
+                    const rawLang = htmlStr.match(/语言:<\/span>\s*([^<]+)/)?.[1]?.split('/')[0]?.trim() || infoText.match(/语言:\s*(.*)/)?.[1]?.split('/')[0] || "未知";
+                    const epMatch = htmlStr.match(/集数:<\/span>\s*(\d+)/) || infoText.match(/集数:\s*(\d+)/);
+
+                    const directors = Array.from(doc.querySelectorAll('a[rel="v:directedBy"]')).map(a => a.innerText.trim()).join(' ');
+                    const actors = Array.from(doc.querySelectorAll('a[rel="v:starring"]')).slice(0, 5).map(a => a.innerText.trim()).join(' ');
+
+                    resolve({
+                        "中文名": chineseName,
+                        "英文名": cleanEnglishName(englishName),
+                        "年份": year,
+                        "季": seasonTag,
+                        "又名": otherNames,
+                        "总集数": epMatch ? epMatch[1] : "1",
+                        "下载集数": '0', // 默认值
+                        "导演": directors ? `导演: ${directors}` : "",
+                        "主演": actors ? `主演: ${actors}` : "",
+                        "语言字幕": formatLanguageTag(rawLang),
+                        "地区": htmlStr.match(/制片国家\/地区:<\/span>\s*([^<]+)/)?.[1]?.trim() || "",
+                        "豆瓣所有类型": Array.from(doc.querySelectorAll('span[property="v:genre"]')).map(s => s.innerText.trim()),
+                        "是否有集数": htmlStr.includes("集数:") || infoText.includes("集数:")
+                    });
+                },
+                onerror: (err) => reject("网络请求异常: " + (err.error || "未知")),
+                ontimeout: () => reject("网络请求超时")
+            });
+        });
+    }
+
+    // ================= 模块 1 =================
+    function initButton1(doubanInput, btnContainer) {
+        const fetchBtn = document.createElement('button');
+        fetchBtn.type = 'button';
+        fetchBtn.className = 'el-button el-button--primary fetch-douban-btn-1'; // 添加特有 class
+        fetchBtn.style.marginRight = '10px';
+        fetchBtn.innerHTML = '<span>自动填写</span>';
+        btnContainer.insertBefore(fetchBtn, btnContainer.firstChild);
+
+        fetchBtn.addEventListener('click', async () => {
+            const url = doubanInput.value.trim();
+            if (!url.includes('douban.com/subject/')) return alert('请先输入有效的豆瓣链接！');
+
+            fetchBtn.innerHTML = '<span>请求中...</span>';
+            fetchBtn.disabled = true;
+
+            try {
+                const data = await fetchDoubanInfo(url);
+                // 模块 1 只需要部分数据
+                autoFill('中文名', data["中文名"]);
+                autoFill('英文名', data["英文名"]);
+                autoFill('年份', data["年份"]);
+                autoFill('季', data["季"]);
+                autoFill('语言字幕', data["语言字幕"]);
+                autoFill('下载集数', data["下载集数"]);
+                autoFill('总集数', data["总集数"]);
+            } catch (error) {
+                alert("抓取失败: " + error);
+            } finally {
+                fetchBtn.innerHTML = '<span>自动填写</span>';
+                fetchBtn.disabled = false;
+            }
+        });
+    }
+
+    // ================= 模块 2 =================
+    function createBtn2(inputEl, container) {
+        const btn = document.createElement('button');
+        btn.innerText = '脚本解析';
+        btn.type = 'button';
+        btn.className = 'fetch-douban-btn-2'; // 添加特有 class
+        btn.style.cssText = `margin-left: 10px; padding: 8px 15px; background-color: #67c23a; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; flex-shrink: 0;`;
+        container.appendChild(btn);
+
+        btn.onclick = async function() {
+            const url = inputEl.value.trim();
+            if (!url) return alert('请先输入豆瓣链接');
+
+            btn.innerText = '解析中...';
+            btn.disabled = true;
+
+            try {
+                const data = await fetchDoubanInfo(url);
+                await fillForm2(data, inputEl.closest('.el-overlay-dialog') || document);
+            } catch (error) {
+                alert("抓取失败: " + error);
+            } finally {
+                btn.innerText = '脚本解析';
+                btn.disabled = false;
+            }
+        };
+    }
+
+    // --- 辅助工具函数 ---
+
+    // 支持更长的中文数字，比如 "十一"
+    function chineseToNum(str) {
+        const map = {'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10};
+        if (str.length === 1) return map[str] || str;
+        if (str.startsWith('十')) return 10 + (map[str[1]] || 0); // 处理 十一、十二
+        return str; // 更复杂的数字暂不处理，直接返回原字符串
+    }
+
     function parseTitleAndSeason(fullTitle) {
         let chineseName = "";
         let englishName = "";
         let seasonTag = "S01";
 
-        const seasonMatch = fullTitle.match(/第([一二三四五六七八九十\d])季/);
+        // 优化正则，匹配可能出现的多位中文或数字
+        const seasonMatch = fullTitle.match(/第([一二三四五六七八九十\d]+)季/);
         if (seasonMatch) {
             const endPos = seasonMatch.index + seasonMatch[0].length;
             chineseName = fullTitle.substring(0, endPos).trim();
             englishName = fullTitle.substring(endPos).trim();
-            const num = chineseToNum(seasonMatch[1]);
+            const num = isNaN(seasonMatch[1]) ? chineseToNum(seasonMatch[1]) : parseInt(seasonMatch[1]);
             seasonTag = `S${num.toString().padStart(2, '0')}`;
         } else {
-            const foreignMatch = fullTitle.match(/[a-zA-Z\u3040-\u30ff\uac00-\ud7af]/);
-            if (foreignMatch) {
-                const splitPos = fullTitle.lastIndexOf(' ', foreignMatch.index);
+            const parts = fullTitle.split(' ');
+            if (parts.length === 1) {
+                chineseName = fullTitle;
+            } else {
+                let splitPos = -1;
+                let currentLen = parts[0].length;
+                for (let i = 1; i < parts.length; i++) {
+                    if (/^\d+[dD]$/.test(parts[i])) {
+                        currentLen += 1 + parts[i].length;
+                        continue;
+                    }
+                    if (/[a-zA-Z\u3040-\u30ff\uac00-\ud7af]/.test(parts[i])) {
+                        splitPos = currentLen;
+                        break;
+                    }
+                    currentLen += 1 + parts[i].length;
+                }
+
+                if (splitPos === -1) {
+                    let len = 0;
+                    for (let i = 0; i < parts.length - 1; i++) {
+                        len += parts[i].length;
+                        if (!/^\d+$/.test(parts[i+1])) {
+                            splitPos = len;
+                            break;
+                        }
+                        len += 1;
+                    }
+                }
+
                 if (splitPos !== -1) {
                     chineseName = fullTitle.substring(0, splitPos).trim();
                     englishName = fullTitle.substring(splitPos).trim();
                 } else {
                     chineseName = fullTitle;
                 }
-            } else {
-                chineseName = fullTitle;
             }
         }
 
-        chineseName = chineseName.match(/[\u4e00-\u9fa50-9\s！，？：；“”（）《》·!！]+/g)?.join('').trim() || chineseName;
-
+        chineseName = chineseName.match(/[\u4e00-\u9fa50-9a-zA-Z\s！，？：；“”（）《》·!！～~、\-]+/g)?.join('').trim() || chineseName;
         if (englishName) {
             englishName = englishName.replace(/Season\s*\d+/i, '').replace(/S\d+/i, '').replace(/\(\d{4}\)/, '').trim();
         }
@@ -96,14 +266,13 @@
         return "";
     }
 
-    // 提取非英文又名
     function findOtherNamesFromAKA(infoText) {
         const akaMatch = infoText.match(/又名:\s*(.*)/);
         if (!akaMatch) return "";
         return akaMatch[1].split('/')
-            .map(n => n.trim())
+            .map(n => n.replace(/\s+/g, ''))
             .filter(n => /[^\x00-\xff]/.test(n))
-            .join(' / ');
+            .join('/');
     }
 
     function cleanEnglishName(name) {
@@ -111,119 +280,6 @@
         return name.replace(/\s+/g, ' ').trim();
     }
 
-    // ================= 模块 1 =================
-    function initButton1(doubanInput) {
-        const btnContainer = doubanInput.closest('.el-form-item__content').querySelector('div');
-        if (!btnContainer) return;
-
-        const fetchBtn = document.createElement('button');
-        fetchBtn.id = 'fetch-douban-btn';
-        fetchBtn.type = 'button';
-        fetchBtn.className = 'el-button el-button--primary';
-        fetchBtn.style.marginRight = '10px';
-        fetchBtn.innerHTML = '<span>自动填写</span>';
-        btnContainer.insertBefore(fetchBtn, btnContainer.firstChild);
-
-        fetchBtn.addEventListener('click', () => {
-            const url = doubanInput.value.trim();
-            if (!url.includes('douban.com/subject/')) return alert('请先输入有效的豆瓣链接！');
-            fetchBtn.innerHTML = '<span>请求中...</span>';
-            GM_xmlhttpRequest({
-                method: "GET",
-                url: url,
-                headers: { "User-Agent": navigator.userAgent, "Referer": "https://movie.douban.com/" },
-                onload: function(response) {
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(response.responseText, "text/html");
-                    const infoText = doc.querySelector('#info')?.innerText || "";
-                    const fullTitle = doc.querySelector('h1 span[property="v:itemreviewed"]')?.innerText.trim() || "";
-                    const year = doc.querySelector('h1 .year')?.innerText.replace(/\(|\)/g, '') || "";
-
-                    let { chineseName, englishName, seasonTag } = parseTitleAndSeason(fullTitle);
-                    if (!englishName || /[\u3040-\u30ff\uac00-\ud7af]/.test(englishName)) englishName = findEnglishFromAKA(infoText);
-
-                    const langMatch = infoText.match(/语言:\s*(.*)/);
-                    const language = langMatch ? formatLanguageTag(langMatch[1].split('/')[0]) : "";
-                    const epMatch = infoText.match(/集数:\s*(\d+)/);
-
-                    autoFill('中文名', chineseName);
-                    autoFill('英文名', cleanEnglishName(englishName));
-                    autoFill('年份', year);
-                    autoFill('季', seasonTag);
-                    autoFill('语言字幕', language);
-                    autoFill('下载集数', '0');
-                    autoFill('总集数', epMatch ? epMatch[1] : "1");
-                    fetchBtn.innerHTML = '<span>自动填写</span>';
-                }
-            });
-        });
-    }
-
-    // ================= 模块 2 (位置固定) =================
-    function createBtn2(inputEl) {
-        const btn = document.createElement('button');
-        btn.id = 'my-custom-parse-btn';
-        btn.innerText = '脚本解析';
-        btn.type = 'button';
-        // 样式跟随原 Element UI 按钮风格
-        btn.style.cssText = `margin-left: 10px; padding: 8px 15px; background-color: #67c23a; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; flex-shrink: 0;`;
-
-        // 寻找输入框所在的容器并插入
-        const container = inputEl.closest('.el-form-item__content').children[0];
-        if(container) container.appendChild(btn);
-
-        btn.onclick = function() {
-            const url = inputEl.value.trim();
-            if (!url) return alert('请先输入豆瓣链接');
-            btn.innerText = '解析中...';
-            fetchData2(url, btn);
-        };
-    }
-
-    function fetchData2(url, btn) {
-        GM_xmlhttpRequest({
-            method: "GET",
-            url: url,
-            headers: { "User-Agent": navigator.userAgent },
-            onload: function(response) {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(response.responseText, "text/html");
-                const htmlStr = response.responseText;
-                const infoText = doc.querySelector('#info')?.innerText || "";
-
-                let rawTitle = doc.querySelector('span[property="v:itemreviewed"]')?.innerText || "";
-                let { chineseName, englishName, seasonTag } = parseTitleAndSeason(rawTitle);
-                if (!englishName || /[\u3040-\u30ff\uac00-\ud7af]/.test(englishName)) englishName = findEnglishFromAKA(infoText);
-
-                const otherNames = findOtherNamesFromAKA(infoText);
-                const rawLang = htmlStr.match(/语言:<\/span>\s*([^<]+)/)?.[1]?.split('/')[0]?.trim() || "未知";
-                const epCount = htmlStr.match(/集数:<\/span>\s*(\d+)/)?.[1] || "1";
-
-                // 导演/主演增加前缀
-                const directors = Array.from(doc.querySelectorAll('a[rel="v:directedBy"]')).map(a => a.innerText.trim()).join(' ');
-                const actors = Array.from(doc.querySelectorAll('a[rel="v:starring"]')).slice(0, 5).map(a => a.innerText.trim()).join(' ');
-
-                const data = {
-                    "中文名": chineseName,
-                    "英文名": cleanEnglishName(englishName),
-                    "又名": otherNames,
-                    "季": seasonTag,
-                    "总集数": epCount,
-                    "导演": directors ? `导演: ${directors}` : "",
-                    "主演": actors ? `主演: ${actors}` : "",
-                    "语言字幕": formatLanguageTag(rawLang),
-                    "地区": htmlStr.match(/制片国家\/地区:<\/span>\s*([^<]+)/)?.[1]?.trim() || "",
-                    "豆瓣所有类型": Array.from(doc.querySelectorAll('span[property="v:genre"]')).map(s => s.innerText.trim()),
-                    "是否有集数": htmlStr.includes("集数:")
-                };
-
-                fillForm2(data);
-                btn.innerText = '脚本解析';
-            }
-        });
-    }
-
-    // --- 填充与辅助 ---
     function formatLanguageTag(rawLang) {
         if (!rawLang) return "";
         const lang = rawLang.trim();
@@ -232,22 +288,29 @@
         return `[${lang}/多语字幕]`;
     }
 
-    function autoFill(label, value) {
-        const input = getInputByLabel(label);
+    // 获取 Label 并填充的公用方法
+    function getInputByLabel(labelText, scope = document) {
+        const labels = Array.from(scope.querySelectorAll('.el-form-item__label'));
+        const targetLabel = labels.find(el => el.textContent.trim().includes(labelText));
+        return targetLabel ? targetLabel.closest('.el-form-item').querySelector('input, textarea') : null;
+    }
+
+    function autoFill(label, value, scope = document) {
+        const input = getInputByLabel(label, scope);
         if (input && value) {
             input.value = value;
             input.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
 
-    async function fillForm2(data) {
-        const allDialogs = document.querySelectorAll('.el-overlay-dialog:not([style*="display: none"])');
-        const currentDialog = allDialogs[allDialogs.length - 1] || document;
-        const items = currentDialog.querySelectorAll('.el-form-item');
+    // 限定范围，避免填充到页面背后的表单
+    async function fillForm2(data, dialogScope) {
+        const items = dialogScope.querySelectorAll('.el-form-item');
         for (const item of items) {
             const label = item.querySelector('.el-form-item__label')?.innerText.trim();
             if (!label) continue;
-            const input = item.querySelector('input.el-input__inner');
+
+            const input = item.querySelector('input.el-input__inner, textarea');
             if (input && data[label] && label !== "类型") {
                 input.value = data[label];
                 input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -261,16 +324,20 @@
     async function fillSelectWithStrictPriority2(itemContainer, data) {
         const selectWrapper = itemContainer.querySelector('.el-select__wrapper');
         if (!selectWrapper) return;
+
         const genres = data["豆瓣所有类型"];
         const hasEpisodes = data["是否有集数"];
         let targetValue = genres.includes("动画") ? "动漫" :
-                          genres.includes("纪录片") ? "纪录" :
-                          genres.some(g => ["真人秀", "脱口秀"].includes(g)) ? "综艺" :
-                          (hasEpisodes ? "电视剧" : "电影");
-        selectWrapper.click();
+        genres.includes("纪录片") ? "纪录" :
+        genres.some(g => ["真人秀", "脱口秀"].includes(g)) ? "综艺" :
+        (hasEpisodes ? "电视剧" : "电影");
+
+        selectWrapper.click(); // 触发下拉框弹出
+
         let found = false;
-        for (let i = 0; i < 15; i++) {
-            await sleep(200);
+        // 缩短了轮询间隔，提升反应速度
+        for (let i = 0; i < 20; i++) {
+            await sleep(100);
             const options = document.querySelectorAll('.el-select-dropdown__item');
             for (let opt of options) {
                 if (opt.innerText.trim() === targetValue) {
@@ -281,6 +348,7 @@
             }
             if (found) break;
         }
+        // 兜底：收起下拉框
         setTimeout(() => { document.body.click(); }, 100);
     }
 })();
