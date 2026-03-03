@@ -7,6 +7,8 @@
 // @match        *://ubweb.johnnycdn.com/*
 // @run-at       document-start
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/changeID.js
+// @downloadURL  https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/changeID.js
 // ==/UserScript==
 
 (function() {
