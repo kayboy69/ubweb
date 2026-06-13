@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         豆瓣信息自动填充 - 综合增强版
 // @namespace    http://tampermonkey.net/
-// @version      6.1
+// @version      6.2
 // @description  适配 task.ubweb.best (Element UI) 和 pan.ubweb.best (原生HTML)
 // @author       Combined & Gemini & Enhanced
 // @match        https://task.ubweb.best/*
@@ -429,7 +429,7 @@
                             "导演": directors ? `导演: ${directors}` : "",
                             "主演": actors ? `主演: ${actors}` : "",
                             "语言字幕": formatLanguageTag(rawLang),
-                            "地区": htmlStr.match(/制片国家\/地区:<\/span>\s*([^<]+)/)?.[1]?.trim() || "",
+                            "地区": (htmlStr.match(/制片国家\/地区:<\/span>\s*([^<]+)/)?.[1]?.trim() || "").split(/[\/,、]/)[0].trim(),
                             "豆瓣所有类型": Array.from(doc.querySelectorAll('span[property="v:genre"]'))
                                 .map(s => s.innerText.trim()),
                             "是否有集数": htmlStr.includes("集数:") || infoText.includes("集数:")
