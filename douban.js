@@ -600,7 +600,25 @@
                 }
             }
 
-            // 1c. 如果没找到，找最后一个"空格 + 连续大写英文单词"
+            // 1c. 如果没找到韩文，检查是否有"中文+日文重复"模式
+            // 例如：终物语(下) 終物語(下)
+            if (splitPos === -1 && parts.length === 2) {
+                // 只有两段时，检查是否结构相似（可能是翻译）
+                const part0 = parts[0].replace(/[\s\-~～·]/g, '');
+                const part1 = parts[1].replace(/[\s\-~～·]/g, '');
+
+                // 如果长度相近且第一段主要是中文，第二段可能是日文
+                if (Math.abs(part0.length - part1.length) <= 2 && part0.length >= 3) {
+                    const chineseCount = (part0.match(/[一-龥]/g) || []).length;
+                    if (chineseCount / part0.length > 0.5) {
+                        // 第一段主要是中文，分割
+                        splitPos = parts[0].length;
+                        log('检测到中文+日文重复模式，分割点:', splitPos);
+                    }
+                }
+            }
+
+            // 1d. 如果没找到，找最后一个"空格 + 连续大写英文单词"
             if (splitPos === -1) {
                 const allEnglishMatches = [...fullTitle.matchAll(/\s+([A-Z][a-z]+\s+[A-Z])/g)];
                 if (allEnglishMatches.length > 0) {
