@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         豆瓣信息自动填充 - 综合增强版
 // @namespace    http://tampermonkey.net/
-// @version      6.2
+// @version      6.3
 // @description  适配 task.ubweb.best (Element UI) 和 pan.ubweb.best (原生HTML)
 // @author       Combined & Gemini & Enhanced
 // @match        https://task.ubweb.best/*
@@ -614,6 +614,26 @@
                         // 第一段主要是中文，分割
                         splitPos = parts[0].length;
                         log('检测到中文+日文重复模式，分割点:', splitPos);
+                    }
+                }
+            }
+
+            // 1c-2: "中文(CJK)前缀 + 英文" —— 找第一个纯英文段，在其前分割
+            // 处理英文名以单字母词(I/A)或小写词开头的情况，例如 "我会找到你 I Will Find You"
+            if (splitPos === -1) {
+                let cjkPrefixLen = 0;
+                for (let i = 0; i < parts.length; i++) {
+                    const isCJK = /[一-鿿぀-ヿ]/.test(parts[i]);
+                    const isEnglish = /^[A-Za-z0-9][A-Za-z0-9\s!?.\-:'&,]*$/.test(parts[i]) && /[A-Za-z]/.test(parts[i]);
+                    if (i > 0 && cjkPrefixLen > 0 && isEnglish) {
+                        splitPos = cjkPrefixLen;
+                        log('CJK前缀+英文分割点:', splitPos, '段索引:', i);
+                        break;
+                    }
+                    if (isCJK) {
+                        cjkPrefixLen += (i === 0 ? 0 : 1) + parts[i].length;
+                    } else {
+                        break;  // 前缀中断（既非 CJK 也非英文），放弃该策略
                     }
                 }
             }
