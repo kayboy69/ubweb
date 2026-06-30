@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         全能流媒体 ID & 链接提取工具 (Ultimate v5.0)
 // @namespace    http://tampermonkey.net/
-// @version      5.0
-// @description  大幅增强站点识别率，支持主流中外流媒体平台，新增TVB Anywhere识别。
+// @version      5.1
+// @description  大幅增强站点识别率，支持主流中外流媒体平台，新增TVB Anywhere与Prime Video识别。
 // @author       Gemini
 // @match        *://*.netflix.com/*
 // @match        *://*.disneyplus.com/*
@@ -25,6 +25,7 @@
 // @match        *://*.miguvideo.com/*
 // @match        *://*.catchplay.com/*
 // @match        *://*.tvbanywhere.com/*
+// @match        *://*.primevideo.com/*
 // @updateURL    https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
 // @downloadURL  https://raw.githubusercontent.com/kayboy69/ubweb/refs/heads/main/getvideoid.js
 // @grant        GM_setClipboard
@@ -76,6 +77,10 @@
         }
         if (host.includes('netflix.com')) return sp.get('jbv') || p.match(/\/title\/(\d+)/)?.[1];
         if (host.includes('disneyplus.com')) return p.match(/(?:video|series)\/([^\/]+)/)?.[1] || p.match(/entity-[a-f0-9-]+/)?.[0];
+        if (host.includes('primevideo.com')) {
+            const m = p.match(/(?:\/region\/[^/]+)?\/detail\/[^/?#]+/);
+            return m ? url.origin + m[0] : null;
+        }
         if (host.includes('bilibili.com')) return p.match(/\/(ep\d+|ss\d+)/)?.[1] ? p.match(/\/(ep\d+|ss\d+)/)[1] + '_tv' : null;
         if (host.includes('bilibili.tv')) return p.match(/\/play\/\d+\/(\d+)/)?.[1] ? 'ep' + p.match(/\/play\/\d+\/(\d+)/)[1] : null;
 
