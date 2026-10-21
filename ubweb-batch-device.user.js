@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         UBWEB 任务广场 - 批量设置设备ID
 // @namespace    ubweb-batch-device
-// @version      2.1.3
-// @description  点击表格行选择栏目，通过接口批量设置设备ID（仅限 564303385 认领的任务）
+// @version      2.2.0
+// @description  点击表格行选择栏目，通过接口批量设置设备ID（仅限当前登录账号认领的任务）
 // @match        https://task.ubweb.best/*
 // @run-at       document-idle
 // @grant        none
@@ -14,7 +14,7 @@
   if (window.__ubBatchDeviceInjected) return;
   window.__ubBatchDeviceInjected = true;
 
-  const ALLOWED_USER = '564303385';
+  let currentUser = '';
   const PUT_KEYS = [
     'id', 'webSite', 'url', 'chsName', 'engName', 'year', 'season', 'quality',
     'maxEps', 'epDownloaded', 'epToDown', 'langAndSub', 'doubanUrl', 'subTitleString',
@@ -33,7 +33,7 @@
   let logLines = [];
   let flashTimer = null;
 
-  let box, deviceSelect, refreshBtn, selectAllBtn, submitBtn, metaEl;
+  let box, deviceSelect, refreshBtn, selectAllBtn, submitBtn, metaEl, labelEl;
 
   function getToken() {
     const token = localStorage.getItem('token');
@@ -64,15 +64,20 @@
     account = await api('/api/user/info');
     const name = norm(account && account.user_name);
     const uid = norm(account && account.uid);
-    if (name !== ALLOWED_USER && uid !== ALLOWED_USER) {
-      throw new Error('当前账号 ' + (name || uid) + ' 无操作权限');
+    const next = name || uid;
+    if (!next) throw new Error('无法识别当前登录账号');
+    if (currentUser && next !== currentUser) selected.clear();
+    currentUser = next;
+    if (labelEl) {
+      labelEl.title = '点击表格行选择栏目（仅限 ' + currentUser + ' 认领）';
     }
   }
 
   async function loadDevices() {
     const map = await api('/api/task/user-devices');
-    const mine = map && map[ALLOWED_USER];
-    if (!mine) throw new Error('未读取到 ' + ALLOWED_USER + ' 的设备');
+    const uid = norm(account && account.uid);
+    const mine = map && (map[currentUser] || (uid ? map[uid] : null));
+    if (!mine) throw new Error('未读取到 ' + currentUser + ' 的设备');
     devices = Object.keys(mine).map((id) => {
       const name = norm(mine[id] && mine[id].device_name) || '设备';
       return { id, label: '(' + name + ')' + id };
@@ -104,7 +109,7 @@
   }
 
   function rowEligible(row) {
-    return rowOwner(row) === ALLOWED_USER;
+    return !!currentUser && rowOwner(row) === currentUser;
   }
 
   function rowBase(row) {
@@ -285,7 +290,10 @@
 
   function toggleRow(row) {
     if (!rowEligible(row)) {
-      flashMeta('仅可操作 ' + ALLOWED_USER + ' 认领的栏目', 'error');
+      flashMeta(
+        currentUser ? '仅可操作 ' + currentUser + ' 认领的栏目' : '正在识别当前账号，请稍候',
+        'error'
+      );
       return;
     }
     const d = decoratedRows().find((x) => x.row === row);
@@ -325,10 +333,10 @@
     box.id = 'ub-batch-inline';
     box.innerHTML = `
       <span class="ubdp-sep"></span>
-      <span class="ubdp-label" title="点击表格行选择栏目（仅限 ${ALLOWED_USER} 认领）">批量设备ID</span>
+      <span class="ubdp-label" title="点击表格行选择栏目（仅限当前登录账号认领）">批量设备ID</span>
       <select id="ubdp-device" title="选择设备"><option value="">读取设备…</option></select>
       <button id="ubdp-refresh" class="ubdp-icon" type="button" title="刷新设备列表">↻</button>
-      <button id="ubdp-select-all" class="el-button" type="button"><span>全选本页</span></button>
+      <button id="ubdp-select-all" class="el-button" type="button" title="全选当前账号认领的行"><span>全选本页</span></button>
       <button id="ubdp-submit" class="el-button el-button--primary" type="button"><span>批量设置</span></button>
       <span class="ubdp-meta" id="ubdp-meta">已选 0 行</span>
     `;
@@ -343,6 +351,7 @@
     selectAllBtn = box.querySelector('#ubdp-select-all');
     submitBtn = box.querySelector('#ubdp-submit');
     metaEl = box.querySelector('#ubdp-meta');
+    labelEl = box.querySelector('.ubdp-label');
 
     deviceSelect.addEventListener('change', () => {
       const opt = deviceSelect.selectedOptions[0];
@@ -434,7 +443,7 @@
       const d = decorated[pos];
       const row = d.row;
       const name = rowName(row);
-      if (!rowEligible(row)) return { key, name, error: '认领人不是 ' + ALLOWED_USER };
+      if (!rowEligible(row)) return { key, name, error: '认领人不是当前账号' };
       let task = items[pos];
       if (!task || taskBase(task) !== rowBase(row)) {
         const hits = items.filter((it) => taskBase(it) === rowBase(row));
@@ -442,8 +451,8 @@
         else if (hits.length === 0) return { key, name, error: '接口中找不到对应任务' };
         else return { key, name, error: '匹配到 ' + hits.length + ' 个相同任务，已跳过' };
       }
-      if (norm(task.executorName) !== ALLOWED_USER) {
-        return { key, name, error: '任务认领人不是 ' + ALLOWED_USER + '，已跳过' };
+      if (!currentUser || norm(task.executorName) !== currentUser) {
+        return { key, name, error: '任务认领人不是当前账号，已跳过' };
       }
       if (!isEditEnabled(row)) return { key, name, error: '编辑按钮不可用，已跳过' };
       return { key, name, task };
